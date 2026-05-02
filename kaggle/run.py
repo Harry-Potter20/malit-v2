@@ -19,9 +19,28 @@ from pathlib import Path
 
 # ── Constants (Kaggle standard paths) ────────────────────────────────────────
 KAGGLE_INPUT = Path("/kaggle/input")
-DATASET_SLUG = "cell-images-for-detecting-malaria"
-DATASET_PATH = KAGGLE_INPUT / DATASET_SLUG
 OUTPUT_DIR = Path("/kaggle/working/results")
+
+# Kaggle mounts datasets at different paths depending on how they were added.
+# Search common locations and pick the first that contains PNG files.
+_DATASET_CANDIDATES = [
+    KAGGLE_INPUT / "cell-images-for-detecting-malaria",
+    KAGGLE_INPUT / "cell-images-for-detecting-malaria" / "cell_images",
+    KAGGLE_INPUT / "datasets" / "iarunava" / "cell-images-for-detecting-malaria" / "cell_images",
+    KAGGLE_INPUT / "iarunava" / "cell-images-for-detecting-malaria" / "cell_images",
+]
+
+
+def _find_dataset() -> Path | None:
+    for candidate in _DATASET_CANDIDATES:
+        if candidate.exists() and any(candidate.rglob("*.png")):
+            return candidate
+    # Last-resort: walk /kaggle/input looking for a dir containing Parasitized/ + Uninfected/
+    for p in KAGGLE_INPUT.rglob("Parasitized"):
+        parent = p.parent
+        if (parent / "Uninfected").exists():
+            return parent
+    return None
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
@@ -30,16 +49,17 @@ def _abort(msg: str) -> None:
     sys.exit(1)
 
 
-def _check_dataset() -> None:
-    if not DATASET_PATH.exists():
+def _check_dataset() -> Path:
+    dataset_path = _find_dataset()
+    if dataset_path is None:
+        tried = "\n  ".join(str(c) for c in _DATASET_CANDIDATES)
         _abort(
-            f"Dataset not found at {DATASET_PATH}. "
-            "Attach 'iarunava/cell-images-for-detecting-malaria' in kernel settings."
+            f"Dataset not found. Tried:\n  {tried}\n"
+            "Actual path on disk: run  !find /kaggle/input -name '*.png' | head -3  to locate it."
         )
-    n = sum(1 for _ in DATASET_PATH.rglob("*.png"))
-    if n == 0:
-        _abort(f"Dataset directory {DATASET_PATH} contains no PNG files.")
-    print(f"[MALIT] Dataset found: {n} images at {DATASET_PATH}")
+    n = sum(1 for _ in dataset_path.rglob("*.png"))
+    print(f"[MALIT] Dataset found: {n} images at {dataset_path}")
+    return dataset_path
 
 
 def _check_gpu() -> None:
@@ -61,11 +81,11 @@ def _install_extras() -> None:
         )
 
 
-def _setup_env() -> None:
-    os.environ["DATASET_PATH"] = str(DATASET_PATH)
+def _setup_env(dataset_path: Path) -> None:
+    os.environ["DATASET_PATH"] = str(dataset_path)
     os.environ["OUTPUT_DIR"] = str(OUTPUT_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[MALIT] DATASET_PATH = {DATASET_PATH}")
+    print(f"[MALIT] DATASET_PATH = {dataset_path}")
     print(f"[MALIT] OUTPUT_DIR   = {OUTPUT_DIR}")
 
 
@@ -76,10 +96,10 @@ def main() -> None:
     print("  MALIT V2 — Kaggle GPU Execution")
     print("=" * 60)
 
-    _check_dataset()
+    dataset_path = _check_dataset()
     _check_gpu()
     _install_extras()
-    _setup_env()
+    _setup_env(dataset_path)
 
     # Locate project root (kaggle/ is one level below root)
     project_root = Path(__file__).resolve().parent.parent
