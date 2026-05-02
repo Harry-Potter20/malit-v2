@@ -1,0 +1,15 @@
+{
+  "id": "YOUR_KAGGLE_USERNAME/malit-v2",
+  "title": "MALIT V2 Full Pipeline",
+  "code_file": "run.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "iarunava/cell-images-for-detecting-malaria"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
