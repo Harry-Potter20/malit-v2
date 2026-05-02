@@ -72,6 +72,15 @@ def _check_gpu() -> None:
 
 
 def _install_extras() -> None:
+    project_root = Path(__file__).resolve().parent.parent
+
+    # Install the src package so all imports resolve regardless of PYTHONPATH
+    print("[MALIT] Installing malit-v2 package (pip install -e .)…")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "-e", str(project_root)],
+        check=True,
+    )
+
     req = Path(__file__).parent / "requirements.txt"
     if req.exists():
         print("[MALIT] Installing extra requirements…")
