@@ -109,9 +109,12 @@ def main() -> None:
         _abort(f"Pipeline script not found: {pipeline_script}")
 
     print("[MALIT] Launching full pipeline…")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_root)
     result = subprocess.run(
         [sys.executable, str(pipeline_script)],
         cwd=str(project_root),
+        env=env,
         check=False,
     )
 
