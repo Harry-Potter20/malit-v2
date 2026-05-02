@@ -36,7 +36,7 @@ results/models/*.ckpt
 *.bin
 
 # ── Dataset — stays on Kaggle, never committed ────────────────────────────
-data/
+/data/
 *.zip
 *.tar.gz
 *.tgz
