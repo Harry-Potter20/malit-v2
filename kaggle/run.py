@@ -72,15 +72,6 @@ def _check_gpu() -> None:
 
 
 def _install_extras() -> None:
-    project_root = Path(__file__).resolve().parent.parent
-
-    # Install the src package so all imports resolve regardless of PYTHONPATH
-    print("[MALIT] Installing malit-v2 package (pip install -e .)…")
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-q", "-e", str(project_root)],
-        check=True,
-    )
-
     req = Path(__file__).parent / "requirements.txt"
     if req.exists():
         print("[MALIT] Installing extra requirements…")
@@ -88,6 +79,17 @@ def _install_extras() -> None:
             [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)],
             check=True,
         )
+
+    # Verify critical packages are importable; install individually if missing
+    for pkg, import_name in [("imagehash", "imagehash"), ("tqdm", "tqdm"), ("statsmodels", "statsmodels")]:
+        try:
+            __import__(import_name)
+        except ImportError:
+            print(f"[MALIT] {pkg} missing — installing…")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-q", pkg],
+                check=True,
+            )
 
 
 def _setup_env(dataset_path: Path) -> None:
