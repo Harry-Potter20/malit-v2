@@ -114,25 +114,37 @@ def main() -> None:
 
     # Locate project root (kaggle/ is one level below root)
     project_root = Path(__file__).resolve().parent.parent
-    pipeline_script = project_root / "scripts" / "run_full_pipeline.py"
+    pipeline_script  = project_root / "scripts" / "run_full_pipeline.py"
+    baselines_script = project_root / "scripts" / "run_baselines.py"
 
-    if not pipeline_script.exists():
-        _abort(f"Pipeline script not found: {pipeline_script}")
+    for script in (pipeline_script, baselines_script):
+        if not script.exists():
+            _abort(f"Script not found: {script}")
 
-    print("[MALIT] Launching full pipeline…")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(project_root)
+
+    print("[MALIT] Step 1/2 — Training MALIT V2…")
     result = subprocess.run(
         [sys.executable, str(pipeline_script)],
         cwd=str(project_root),
         env=env,
         check=False,
     )
-
     if result.returncode != 0:
-        _abort(f"Pipeline failed with exit code {result.returncode}")
+        _abort(f"MALIT pipeline failed with exit code {result.returncode}")
 
-    print("[MALIT] Pipeline complete. Results at", OUTPUT_DIR)
+    print("[MALIT] Step 2/2 — Training baselines and running comparison…")
+    result = subprocess.run(
+        [sys.executable, str(baselines_script)],
+        cwd=str(project_root),
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        _abort(f"Baselines pipeline failed with exit code {result.returncode}")
+
+    print("[MALIT] All done. Results at", OUTPUT_DIR)
 
 
 if __name__ == "__main__":

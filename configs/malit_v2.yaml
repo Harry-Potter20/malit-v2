@@ -30,9 +30,9 @@ training:
     weight_decay: 1.0e-4
   scheduler:
     name: cosine_annealing
-    T_max: 50
+    T_max: 20
     eta_min: 1.0e-6
-  epochs: 50
+  epochs: 20
   batch_size: 32
   amp: true
   early_stopping:

@@ -51,7 +51,7 @@ class BaselineRunner:
         device: str | torch.device | None = None,
         lr: float = 3e-4,
         weight_decay: float = 1e-4,
-        epochs: int = 50,
+        epochs: int = 20,
         amp: bool = True,
         patience: int = 3,
         grad_clip: float = 1.0,
