@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -13,17 +14,24 @@ from .deduplication import deduplicate
 logger = logging.getLogger(__name__)
 
 
+def get_dataset_path() -> Path:
+    """
+    Central dataset resolver:
+    - Kaggle: /kaggle/input/...
+    - Local fallback: data/cell_images
+    """
+    return Path(os.getenv("DATASET_PATH", "data/cell_images"))
+
+
 class DataPipeline:
     """
-    End-to-end data preparation: deduplication → stratified split → DataLoaders.
-
-    Splits are fixed by seed=42 so they are identical across all training seeds.
-    This prevents data leakage across experiments.
+    End-to-end data preparation:
+    deduplication → stratified split → DataLoaders
     """
 
     def __init__(
         self,
-        root: str | Path,
+        root: str | Path | None = None,
         image_size: int = 224,
         train_frac: float = 0.70,
         val_frac: float = 0.15,
@@ -34,7 +42,9 @@ class DataPipeline:
         num_workers: int = 4,
         deduplicate_data: bool = True,
     ):
-        self.root = Path(root)
+        # 🔥 FIX: auto-resolve dataset path if not provided
+        self.root = Path(root) if root is not None else get_dataset_path()
+
         self.image_size = image_size
         self.train_frac = train_frac
         self.val_frac = val_frac
@@ -51,34 +61,54 @@ class DataPipeline:
         self._test_ds: MalariaDataset | None = None
         self._split_indices: dict[str, list[int]] | None = None
 
-    # ── Public API ──────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
 
     def prepare(self) -> "DataPipeline":
-        """Load, deduplicate, and split. Call once before get_loaders()."""
+        """Load, deduplicate, and split dataset."""
+
+        logger.info("[DATA] Using dataset path: %s", self.root)
+        logger.info("[DATA] Exists: %s", self.root.exists())
+
         full_ds = MalariaDataset.from_directory(self.root)
+
+        # 🔥 HARD GUARD (prevents your Kaggle crash)
+        if len(full_ds) == 0:
+            raise ValueError(
+                f"❌ No images found at: {self.root}\n"
+                "Check DATASET_PATH or Kaggle dataset mounting."
+            )
+
         logger.info("Loaded %d images from %s", len(full_ds), self.root)
 
         paths, labels = full_ds.image_paths, full_ds.labels
 
+        # ── Deduplication ───────────────────────────────
         if self.deduplicate_data:
             kept, removed = deduplicate(paths, self.hash_size, self.hamming_threshold)
             kept_set = set(kept)
+
             indices = [i for i, p in enumerate(paths) if p in kept_set]
             paths = [paths[i] for i in indices]
             labels = [labels[i] for i in indices]
-            logger.info("After dedup: %d images (%d removed)", len(paths), len(removed))
+
+            logger.info(
+                "After dedup: %d images (%d removed)",
+                len(paths), len(removed)
+            )
 
         labels_arr = np.array(labels)
         all_idx = np.arange(len(paths))
 
-        # Fixed split: train+val+test, stratified, seed=42 (CRITICAL)
+        # ── Split ───────────────────────────────────────
         train_val_idx, test_idx = train_test_split(
             all_idx,
             test_size=self.test_frac,
             stratify=labels_arr,
             random_state=self.split_seed,
         )
+
         relative_val = self.val_frac / (self.train_frac + self.val_frac)
+
         train_idx, val_idx = train_test_split(
             train_val_idx,
             test_size=relative_val,
@@ -92,43 +122,61 @@ class DataPipeline:
             "test": test_idx.tolist(),
         }
 
+        # ── Datasets ───────────────────────────────────
         train_tf = build_transforms(self.image_size, is_train=True)
         eval_tf = build_transforms(self.image_size, is_train=False)
 
         base_ds = MalariaDataset(paths, labels, transform=None)
+
         self._train_ds = base_ds.subset(train_idx.tolist(), train_tf)
         self._val_ds = base_ds.subset(val_idx.tolist(), eval_tf)
         self._test_ds = base_ds.subset(test_idx.tolist(), eval_tf)
 
         logger.info(
             "Split sizes — train: %d  val: %d  test: %d",
-            len(self._train_ds), len(self._val_ds), len(self._test_ds),
+            len(self._train_ds),
+            len(self._val_ds),
+            len(self._test_ds),
         )
+
         return self
 
-    def get_loaders(
-        self, device: "torch.device | None" = None
-    ) -> tuple[DataLoader, DataLoader, DataLoader]:
+    # ─────────────────────────────────────────────────────────────
+
+    def get_loaders(self, device: "torch.device | None" = None):
         import torch
+
         assert self._train_ds is not None, "Call prepare() first."
-        # pin_memory is only supported on CUDA; MPS and CPU must not use it
-        if device is not None:
-            pin_memory = device.type == "cuda"
-        else:
-            pin_memory = torch.cuda.is_available()
+
+        pin_memory = device.type == "cuda" if device else torch.cuda.is_available()
+
         train_loader = DataLoader(
-            self._train_ds, batch_size=self.batch_size,
-            shuffle=True, num_workers=self.num_workers, pin_memory=pin_memory,
+            self._train_ds,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=pin_memory,
         )
+
         val_loader = DataLoader(
-            self._val_ds, batch_size=self.batch_size,
-            shuffle=False, num_workers=self.num_workers, pin_memory=pin_memory,
+            self._val_ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=pin_memory,
         )
+
         test_loader = DataLoader(
-            self._test_ds, batch_size=self.batch_size,
-            shuffle=False, num_workers=self.num_workers, pin_memory=pin_memory,
+            self._test_ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=pin_memory,
         )
+
         return train_loader, val_loader, test_loader
+
+    # ─────────────────────────────────────────────────────────────
 
     @property
     def split_indices(self) -> dict[str, list[int]]:
@@ -138,4 +186,8 @@ class DataPipeline:
     @property
     def datasets(self) -> dict[str, MalariaDataset]:
         assert self._train_ds is not None, "Call prepare() first."
-        return {"train": self._train_ds, "val": self._val_ds, "test": self._test_ds}
+        return {
+            "train": self._train_ds,
+            "val": self._val_ds,
+            "test": self._test_ds,
+        }
