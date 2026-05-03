@@ -5,7 +5,9 @@ This is the ONLY script Kaggle executes.  It:
   1. Validates the GPU and dataset are available
   2. Sets DATASET_PATH and OUTPUT_DIR environment variables
   3. Installs any missing packages from requirements.txt
-  4. Calls scripts/run_full_pipeline.py
+  4. Calls scripts/run_full_pipeline.py  (MALIT V2)
+  5. Calls scripts/run_baselines.py      (5 baselines + comparison)
+  6. Zips all results to /kaggle/working/malit_results.zip for download
 
 SECURITY: This file MUST NOT contain any API keys or credentials.
 """
@@ -15,6 +17,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 # ── Constants (Kaggle standard paths) ────────────────────────────────────────
@@ -100,6 +103,27 @@ def _setup_env(dataset_path: Path) -> None:
     print(f"[MALIT] OUTPUT_DIR   = {OUTPUT_DIR}")
 
 
+# ── Results packaging ────────────────────────────────────────────────────────
+
+def _zip_results() -> None:
+    """Zip all results into a single file for easy Kaggle output download."""
+    zip_path = Path("/kaggle/working/malit_results.zip")
+    results_dir = OUTPUT_DIR  # /kaggle/working/results
+
+    if not results_dir.exists():
+        print("[MALIT] No results directory to zip.", file=sys.stderr)
+        return
+
+    print(f"[MALIT] Zipping results → {zip_path}")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in sorted(results_dir.rglob("*")):
+            if file.is_file():
+                zf.write(file, file.relative_to(results_dir.parent))
+
+    size_mb = zip_path.stat().st_size / 1_000_000
+    print(f"[MALIT] malit_results.zip ready ({size_mb:.1f} MB) — download from Kaggle Output tab")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -144,6 +168,7 @@ def main() -> None:
     if result.returncode != 0:
         _abort(f"Baselines pipeline failed with exit code {result.returncode}")
 
+    _zip_results()
     print("[MALIT] All done. Results at", OUTPUT_DIR)
 
 
