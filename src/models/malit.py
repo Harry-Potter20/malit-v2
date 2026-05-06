@@ -94,12 +94,22 @@ class MALITV2(nn.Module):
         return _map.get(backbone_name, 1280)
 
     def _freeze_backbone(self, n_blocks: int) -> None:
-        """Freeze the first `n_blocks` blocks of the EfficientNet backbone."""
-        children = list(self.backbone.children())
-        for i, child in enumerate(children):
-            if i < n_blocks:
-                for param in child.parameters():
-                    param.requires_grad = False
+        """Freeze stem + first n_blocks MBConv stages of the EfficientNet backbone.
+
+        timm's EfficientNet has a flat children() list where 'blocks' is a single
+        child containing all 7 MBConv stages — iterating children() directly would
+        freeze all stages at once. Use named_parameters() for stage-level control.
+        """
+        for name, param in self.backbone.named_parameters():
+            if any(name.startswith(p) for p in ("conv_stem", "bn1", "act1")):
+                param.requires_grad = False
+            elif name.startswith("blocks."):
+                try:
+                    stage_idx = int(name.split(".")[1])
+                    if stage_idx < n_blocks:
+                        param.requires_grad = False
+                except (IndexError, ValueError):
+                    pass
 
     # ────────────────────────────────────────────────────────────────────────
     # Forward

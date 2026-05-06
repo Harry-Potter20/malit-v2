@@ -110,7 +110,7 @@ def main() -> None:
     logger.info("Device=%s  batch_size=%d", device, batch_size)
 
     # ── Stage 1: Data ─────────────────────────────────────────────────────────
-    logger.info("━━━ [1/6] Data Pipeline ━━━")
+    logger.info("━━━ [1/7] Data Pipeline ━━━")
     if args.quick:
         train_l, val_l, test_l = build_quick_loaders(dataset_path, cfg.model.image_size, batch_size)
     else:
@@ -130,7 +130,7 @@ def main() -> None:
         saver.save_reproducibility(pipeline.split_indices, "split_indices.json")
 
     # ── Stage 2: Training ─────────────────────────────────────────────────────
-    logger.info("━━━ [2/6] Multi-Seed Training (seeds=%s) ━━━", cfg.training.active_seeds)
+    logger.info("━━━ [2/7] Multi-Seed Training (seeds=%s) ━━━", cfg.training.active_seeds)
     from src.training.runner import MultiSeedRunner
 
     runner = MultiSeedRunner(
@@ -145,7 +145,7 @@ def main() -> None:
     ])
 
     # ── Stage 3: Uncertainty ──────────────────────────────────────────────────
-    logger.info("━━━ [3/6] Uncertainty Estimation ━━━")
+    logger.info("━━━ [3/7] Uncertainty Estimation ━━━")
     from src.explainability.bayesian_uncertainty import BayesianUncertainty
     from src.explainability.ensemble_confidence import EnsembleConfidence
 
@@ -164,7 +164,7 @@ def main() -> None:
     log_gpu_memory("post-uncertainty")
 
     # ── Stage 4: CBR ──────────────────────────────────────────────────────────
-    logger.info("━━━ [4/6] Case-Based Reasoning ━━━")
+    logger.info("━━━ [4/7] Case-Based Reasoning ━━━")
     from src.explainability.case_based_reasoning import CaseBasedReasoning, EmbeddingExtractor
 
     extractor = EmbeddingExtractor(first_model, device)
@@ -180,8 +180,28 @@ def main() -> None:
         "cbr_summary",
     )
 
-    # ── Stage 5: Statistics ───────────────────────────────────────────────────
-    logger.info("━━━ [5/6] Statistical Testing ━━━")
+    # ── Stage 5: Visualizations ───────────────────────────────────────────────
+    logger.info("━━━ [5/7] Visualizations ━━━")
+    try:
+        from src.interpretability.visualize import (
+            plot_gabor_filters, plot_lcci_gates,
+            plot_cbr_consistency, save_gradcam_grid,
+        )
+        plots_dir = results_base / "plots"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+
+        plot_gabor_filters(first_model.gabor, plots_dir / "gabor_filters.png")
+        plot_lcci_gates(first_model, test_l, device, plots_dir / "lcci_gates.png")
+        plot_cbr_consistency(cbr_results, results_base / "cbr" / "consistency.png")
+        save_gradcam_grid(first_model, test_l, device,
+                          results_base / "gradcam",
+                          n_images=1 if args.quick else 16)
+    except Exception as exc:
+        logger.warning("Visualization stage failed (non-fatal): %s", exc)
+    log_gpu_memory("post-viz")
+
+    # ── Stage 6: Statistics ───────────────────────────────────────────────────
+    logger.info("━━━ [6/7] Statistical Testing ━━━")
     from src.statistics.tests import StatisticsReport
 
     if len(runner.seed_preds) >= 2:
@@ -197,8 +217,8 @@ def main() -> None:
                     report["summary"]["mean_f1"], report["summary"]["std_f1"],
                     report["tost"]["equivalent"])
 
-    # ── Stage 6: Reproducibility ──────────────────────────────────────────────
-    logger.info("━━━ [6/6] Reproducibility Artifacts ━━━")
+    # ── Stage 7: Reproducibility ──────────────────────────────────────────────
+    logger.info("━━━ [7/7] Reproducibility Artifacts ━━━")
     saver.save_reproducibility(
         {"seeds": cfg.training.active_seeds, "split_seed": cfg.data.seed}, "seed_manifest.json"
     )

@@ -110,7 +110,8 @@ class MultiSeedRunner:
             self.seed_models[seed] = model
 
             self.saver.save_metrics(
-                {"seed": seed, "metrics": metrics, "history": history},
+                {"seed": seed, "metrics": metrics, "history": history,
+                 "predictions": preds, "labels": labels},
                 f"seed_{seed}_metrics",
             )
             logger.info("Seed %d  F1=%.4f  Acc=%.4f", seed, metrics.get("f1", 0), metrics.get("accuracy", 0))
