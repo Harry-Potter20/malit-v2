@@ -40,6 +40,11 @@ class MALITV2(nn.Module):
         lcci_reduction: int = 16,
         attention_reduction: int = 16,
         ms_rfs: list[int] | None = None,
+        # ── Ablation flags ──────────────────────────────────────────────────
+        use_gabor: bool = True,
+        use_lcci: bool = True,
+        use_attention: bool = True,
+        use_multiscale: bool = True,
     ):
         super().__init__()
         if ms_rfs is None:
@@ -64,6 +69,12 @@ class MALITV2(nn.Module):
         self.backbone = backbone
         self._freeze_backbone(efficientnet_freeze_blocks)
         feat_channels = self._backbone_out_channels(efficientnet_backbone)
+
+        # ── Ablation flags ───────────────────────────────────────────────────
+        self.use_gabor = use_gabor
+        self.use_lcci = use_lcci
+        self.use_attention = use_attention
+        self.use_multiscale = use_multiscale
 
         # ── Custom head modules ──────────────────────────────────────────────
         self.lcci = LCCIModule(feat_channels, reduction=lcci_reduction)
@@ -118,37 +129,40 @@ class MALITV2(nn.Module):
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        # Gabor preprocessing
-        x = self.gabor(x)                          # (B, 3, 224, 224)
+        if self.use_gabor:
+            x = self.gabor(x)                      # (B, 3, 224, 224)
 
-        # EfficientNet feature extraction
         feats = self.backbone(x)                   # (B, C, H, W)
 
-        # LCCI
-        feats = self.lcci(feats)
+        if self.use_lcci:
+            feats = self.lcci(feats)
 
-        # Dual Attention
-        feats, att_info = self.dual_attention(feats)
+        if self.use_attention:
+            feats, att_info = self.dual_attention(feats)
+        else:
+            att_info = {}
 
-        # MultiScale Aggregation
-        feats = self.multiscale(feats)
+        if self.use_multiscale:
+            feats = self.multiscale(feats)
 
-        # Global Average Pool + classify
         pooled = self.gap(feats).flatten(1)        # (B, C)
         logits = self.classifier(pooled)
 
-        # Channel energy (post-LCCI, pre-attention) for interpretability
         att_info["channel_energy"] = feats.pow(2).mean(dim=(-2, -1))  # (B, C)
 
         return logits, att_info
 
     def extract_embedding(self, x: torch.Tensor) -> torch.Tensor:
         """512-d embedding after GAP — used for CBR and ensemble analysis."""
-        x = self.gabor(x)
+        if self.use_gabor:
+            x = self.gabor(x)
         feats = self.backbone(x)
-        feats = self.lcci(feats)
-        feats, _ = self.dual_attention(feats)
-        feats = self.multiscale(feats)
+        if self.use_lcci:
+            feats = self.lcci(feats)
+        if self.use_attention:
+            feats, _ = self.dual_attention(feats)
+        if self.use_multiscale:
+            feats = self.multiscale(feats)
         pooled = self.gap(feats).flatten(1)  # (B, C)
         # Project to 512-d if needed
         if not hasattr(self, "_emb_proj"):

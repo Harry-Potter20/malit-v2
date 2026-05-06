@@ -5,9 +5,10 @@ This is the ONLY script Kaggle executes.  It:
   1. Validates the GPU and dataset are available
   2. Sets DATASET_PATH and OUTPUT_DIR environment variables
   3. Installs any missing packages from requirements.txt
-  4. Calls scripts/run_full_pipeline.py  (MALIT V2)
+  4. Calls scripts/run_full_pipeline.py  (MALIT V2 + visualizations)
   5. Calls scripts/run_baselines.py      (5 baselines + comparison)
-  6. Zips all results to /kaggle/working/malit_results.zip for download
+  6. Calls scripts/run_ablation.py       (4 ablation variants + table)
+  7. Zips all results to /kaggle/working/malit_results.zip for download
 
 SECURITY: This file MUST NOT contain any API keys or credentials.
 """
@@ -140,8 +141,9 @@ def main() -> None:
     project_root = Path(__file__).resolve().parent.parent
     pipeline_script  = project_root / "scripts" / "run_full_pipeline.py"
     baselines_script = project_root / "scripts" / "run_baselines.py"
+    ablation_script  = project_root / "scripts" / "run_ablation.py"
 
-    for script in (pipeline_script, baselines_script):
+    for script in (pipeline_script, baselines_script, ablation_script):
         if not script.exists():
             _abort(f"Script not found: {script}")
 
@@ -158,7 +160,7 @@ def main() -> None:
     if result.returncode != 0:
         _abort(f"MALIT pipeline failed with exit code {result.returncode}")
 
-    print("[MALIT] Step 2/2 — Training baselines and running comparison…")
+    print("[MALIT] Step 2/3 — Training baselines and running comparison…")
     result = subprocess.run(
         [sys.executable, str(baselines_script)],
         cwd=str(project_root),
@@ -167,6 +169,16 @@ def main() -> None:
     )
     if result.returncode != 0:
         _abort(f"Baselines pipeline failed with exit code {result.returncode}")
+
+    print("[MALIT] Step 3/3 — Ablation study (component contribution analysis)…")
+    result = subprocess.run(
+        [sys.executable, str(ablation_script)],
+        cwd=str(project_root),
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        _abort(f"Ablation study failed with exit code {result.returncode}")
 
     _zip_results()
     print("[MALIT] All done. Results at", OUTPUT_DIR)
