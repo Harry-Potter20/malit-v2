@@ -80,18 +80,41 @@ def build_quick_loaders(dataset_path: str, image_size: int, batch_size: int):
     )
 
 
-def load_malit_results(results_base: Path, seeds: list[int]) -> dict | None:
-    """Load previously saved MALIT per-seed metrics if available."""
-    seed_metrics = {}
-    seed_preds = {}
-    for seed in seeds:
-        f = results_base / "statistics" / f"seed_{seed}_metrics.json"
-        if not f.exists():
-            return None
+def load_malit_results(results_base: Path) -> dict | None:
+    """Auto-discover and load all available MALIT per-seed metrics."""
+    stats_dir = results_base / "statistics"
+    if not stats_dir.exists():
+        logger.warning("MALIT statistics dir not found: %s", stats_dir)
+        return None
+
+    seed_files = sorted(stats_dir.glob("seed_*_metrics.json"))
+    if not seed_files:
+        logger.warning("No seed_*_metrics.json found in %s", stats_dir)
+        return None
+
+    seed_metrics: dict = {}
+    seed_preds: dict = {}
+
+    for f in seed_files:
+        try:
+            seed = int(f.stem.split("_")[1])
+        except (IndexError, ValueError):
+            continue
         import json
         data = json.loads(f.read_text())
+        if not data.get("predictions"):
+            logger.warning(
+                "No predictions in %s — McNemar will be skipped. "
+                "Re-run run_full_pipeline.py to regenerate.", f.name
+            )
+            return None
         seed_metrics[seed] = data.get("metrics", {})
-        seed_preds[seed] = data.get("predictions", [])  # may be absent
+        seed_preds[seed] = data["predictions"]
+
+    if not seed_preds:
+        return None
+
+    logger.info("Loaded MALIT results for seeds: %s", sorted(seed_preds.keys()))
     return {"seed_metrics": seed_metrics, "seed_preds": seed_preds}
 
 
@@ -181,7 +204,7 @@ def main() -> None:
 
     # ── Stage 3: Statistical comparison ───────────────────────────────────────
     logger.info("━━━ [3/4] Statistical Comparison ━━━")
-    malit_results = load_malit_results(results_base, seeds)
+    malit_results = load_malit_results(results_base)
     if malit_results is None:
         logger.warning(
             "MALIT results not found in %s — skipping comparison. "

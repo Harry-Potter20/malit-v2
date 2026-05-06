@@ -183,21 +183,51 @@ def main() -> None:
     # ── Stage 5: Visualizations ───────────────────────────────────────────────
     logger.info("━━━ [5/7] Visualizations ━━━")
     try:
-        from src.interpretability.visualize import (
-            plot_gabor_filters, plot_lcci_gates,
-            plot_cbr_consistency, save_gradcam_grid,
-        )
+        from src.interpretability.gradcam import GradCAMVisualizer
+        from src.interpretability.gabor_viz import GaborVisualizer
+        from src.interpretability.lcci_viz import LCCIVisualizer
+        from src.interpretability.attention_viz import AttentionVisualizer
+        from src.interpretability.visualize import plot_cbr_consistency
+
         plots_dir = results_base / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
+        n_viz = 1 if args.quick else 16
 
-        plot_gabor_filters(first_model.gabor, plots_dir / "gabor_filters.png")
-        plot_lcci_gates(first_model, test_l, device, plots_dir / "lcci_gates.png")
+        # GradCAM
+        sample_imgs, _ = next(iter(test_l))
+        GradCAMVisualizer(first_model).save_batch(
+            sample_imgs[:n_viz].to(device),
+            results_base / "gradcam", prefix="gradcam",
+        )
+
+        # Gabor filter bank + parameter distributions + decomposition
+        gbr_viz = GaborVisualizer(first_model.gabor)
+        gbr_viz.plot_filter_bank(plots_dir)
+        gbr_viz.plot_parameter_distribution(plots_dir)
+        gbr_viz.plot_decomposition(sample_imgs[0], plots_dir)
+
+        # LCCI channel suppression (pre vs post energy ratio)
+        max_b = 2 if args.quick else 10
+        lcci_viz = LCCIVisualizer(first_model, device)
+        energies = lcci_viz.collect_channel_energies(test_l, max_batches=max_b)
+        lcci_viz.plot_channel_suppression(energies, plots_dir)
+        saver.save_metrics(
+            {"dominance_ratio": lcci_viz.dominance_ratio(energies["post_lcci"])},
+            "lcci_dominance_ratio",
+        )
+
+        # Attention maps (channel + spatial + entropy)
+        att_viz = AttentionVisualizer(first_model, device)
+        att_viz.plot_spatial_attention(sample_imgs[:8], results_base / "attention_maps")
+        att_data = att_viz.collect_attention(test_l, max_batches=max_b)
+        if att_data.get("attention_entropy"):
+            att_viz.plot_entropy_distribution(att_data["attention_entropy"], plots_dir)
+
+        # CBR consistency histogram
         plot_cbr_consistency(cbr_results, results_base / "cbr" / "consistency.png")
-        save_gradcam_grid(first_model, test_l, device,
-                          results_base / "gradcam",
-                          n_images=1 if args.quick else 16)
+
     except Exception as exc:
-        logger.warning("Visualization stage failed (non-fatal): %s", exc)
+        logger.warning("Visualization stage failed (non-fatal): %s", exc, exc_info=True)
     log_gpu_memory("post-viz")
 
     # ── Stage 6: Statistics ───────────────────────────────────────────────────
