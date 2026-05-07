@@ -228,9 +228,10 @@ class AblationRunner:
             v_mean_f1 = float(np.nanmean(v_f1_vals))
             delta_f1  = full_mean_f1 - v_mean_f1  # positive = full is better
 
-            # TOST
-            full_f1_scores    = [m.get("f1", float("nan")) for m in full_seed_metrics.values()]
-            variant_f1_scores = [m.get("f1", float("nan")) for m in variant_metrics.values()]
+            # TOST — use only shared seeds so arrays are equal length
+            shared_for_tost = sorted(set(full_seed_metrics) & set(variant_metrics))
+            full_f1_scores    = [full_seed_metrics[s].get("f1", float("nan")) for s in shared_for_tost]
+            variant_f1_scores = [variant_metrics[s].get("f1", float("nan")) for s in shared_for_tost]
             tost = TOSTEquivalence.test(
                 full_f1_scores, variant_f1_scores,
                 margin=self.cfg.statistics.tost_margin,
