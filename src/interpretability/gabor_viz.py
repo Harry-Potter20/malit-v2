@@ -84,7 +84,8 @@ class GaborVisualizer:
         self.layer.eval()
 
         with torch.no_grad():
-            img_batch = image.unsqueeze(0)
+            device = next(self.layer.parameters()).device
+            img_batch = image.unsqueeze(0).to(device)
             out = self.layer(img_batch)  # (1, out_channels, H, W)
 
         out_np = out[0].cpu().numpy()
