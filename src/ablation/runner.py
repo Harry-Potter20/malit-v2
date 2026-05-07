@@ -28,7 +28,7 @@ from src.training.trainer import Trainer
 from src.utils.config import Config
 from src.utils.save import ArtifactSaver, _make_serializable
 from src.utils.seed import set_seed
-from src.statistics.tests import McNemarTest, TOSTTest
+from src.statistics.tests import McNemarTest, TOSTEquivalence
 
 logger = logging.getLogger(__name__)
 
@@ -229,9 +229,12 @@ class AblationRunner:
             delta_f1  = full_mean_f1 - v_mean_f1  # positive = full is better
 
             # TOST
-            tost = TOSTTest.test(
-                list(full_seed_metrics.values()), list(variant_metrics.values()),
-                metric="f1", margin=self.cfg.statistics.tost_margin,
+            full_f1_scores    = [m.get("f1", float("nan")) for m in full_seed_metrics.values()]
+            variant_f1_scores = [m.get("f1", float("nan")) for m in variant_metrics.values()]
+            tost = TOSTEquivalence.test(
+                full_f1_scores, variant_f1_scores,
+                margin=self.cfg.statistics.tost_margin,
+                alpha=self.cfg.statistics.tost_alpha,
             )
 
             # Interpretation
