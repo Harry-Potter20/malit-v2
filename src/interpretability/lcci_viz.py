@@ -39,7 +39,7 @@ class LCCIVisualizer:
         pre_features: dict = {}
         post_features: dict = {}
 
-        def pre_hook(module, inp, out):
+        def pre_hook(module, inp):
             pre_features["x"] = inp[0].detach()
 
         def post_hook(module, inp, out):
