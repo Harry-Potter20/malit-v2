@@ -114,7 +114,7 @@ class GradCAMVisualizer:
         saved = []
         for i, (img_t, cam) in enumerate(zip(images, cams)):
             # De-normalize image for display
-            img_np = img_t.permute(1, 2, 0).cpu().numpy()
+            img_np = img_t.detach().permute(1, 2, 0).cpu().numpy()
             img_np = (img_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406]))
             img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
 
