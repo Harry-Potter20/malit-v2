@@ -69,6 +69,8 @@ class TrainingConfig:
     early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     grad_clip: float = 1.0
     num_workers: int = 4
+    lambda_cal: float = 0.1
+    cal_warmup_epochs: int = 3
 
     @property
     def active_seeds(self) -> list[int]:
@@ -177,6 +179,8 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.training.amp = train_raw.get("amp", cfg.training.amp)
         cfg.training.grad_clip = train_raw.get("grad_clip", cfg.training.grad_clip)
         cfg.training.num_workers = train_raw.get("num_workers", cfg.training.num_workers)
+        cfg.training.lambda_cal = train_raw.get("lambda_cal", cfg.training.lambda_cal)
+        cfg.training.cal_warmup_epochs = train_raw.get("cal_warmup_epochs", cfg.training.cal_warmup_epochs)
         opt = train_raw.get("optimizer", {})
         cfg.training.optimizer = OptimizerConfig(**{k: v for k, v in opt.items() if k in OptimizerConfig.__dataclass_fields__})
         sch = train_raw.get("scheduler", {})

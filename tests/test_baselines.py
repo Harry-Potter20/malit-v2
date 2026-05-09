@@ -237,12 +237,12 @@ class TestGradAccumTrainer:
 
     def test_loss_is_finite(self):
         trainer = self._build_trainer(grad_accum_steps=2)
-        epoch_metrics = trainer.train_epoch()
+        epoch_metrics = trainer.train_epoch(1)
         assert np.isfinite(epoch_metrics["loss"])
 
     def test_grad_accum_1_same_as_default(self):
         trainer = self._build_trainer(grad_accum_steps=1)
-        epoch_metrics = trainer.train_epoch()
+        epoch_metrics = trainer.train_epoch(1)
         assert np.isfinite(epoch_metrics["loss"])
 
     def test_grad_accum_steps_stored(self):

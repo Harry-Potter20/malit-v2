@@ -33,6 +33,8 @@ training:
     T_max: 20
     eta_min: 1.0e-6
   epochs: 20
+  lambda_cal: 0.1
+  cal_warmup_epochs: 3
   batch_size: 32
   amp: true
   early_stopping:

@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from src.models.malit import MALITV2
 from src.utils.config import Config
+from src.utils.prediction_logging import PredictionLogger
 from src.utils.save import ArtifactSaver
 from src.utils.seed import set_seed
 from .trainer import Trainer
@@ -94,6 +95,8 @@ class MultiSeedRunner:
                 saver=self.saver,
                 model_name="malit_v2",
                 seed=seed,
+                lambda_cal=tc.lambda_cal,
+                cal_warmup_epochs=tc.cal_warmup_epochs,
             )
 
             trainer.fit()
@@ -114,6 +117,8 @@ class MultiSeedRunner:
                  "predictions": preds, "labels": labels},
                 f"seed_{seed}_metrics",
             )
+
+            self._save_sample_predictions(seed, probs_list, preds, labels)
             logger.info("Seed %d  F1=%.4f  Acc=%.4f", seed, metrics.get("f1", 0), metrics.get("accuracy", 0))
 
         self._save_aggregate()
@@ -131,6 +136,28 @@ class MultiSeedRunner:
             probs_list.extend(probs.cpu().tolist())
             logits_list.extend(logits.cpu().tolist())
         return probs_list, logits_list
+
+    def _save_sample_predictions(
+        self, seed: int, probs_list: list, preds: list, labels: list
+    ) -> None:
+        try:
+            probs = np.array(probs_list)
+            confidence = probs.max(axis=1)
+            entropy = -(probs * np.log(probs + 1e-8)).sum(axis=1)
+            log_obj = PredictionLogger()
+            for i, (pred, label) in enumerate(zip(preds, labels)):
+                log_obj.add(
+                    image_id=i,
+                    true_label=int(label),
+                    predicted_label=int(pred),
+                    confidence=float(confidence[i]),
+                    entropy=float(entropy[i]),
+                    correct=int(pred == label),
+                )
+            out = self.saver.base / "results" / "statistics"
+            log_obj.save(out / f"sample_predictions_seed{seed}.csv")
+        except Exception as exc:
+            logger.warning("Per-sample prediction logging failed (non-fatal): %s", exc)
 
     def _save_aggregate(self) -> None:
         agg: dict[str, Any] = {}

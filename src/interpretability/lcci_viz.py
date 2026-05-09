@@ -45,9 +45,9 @@ class LCCIVisualizer:
         def post_hook(module, inp, out):
             post_features["x"] = out.detach()
 
-        lcci_module = getattr(self.model, "lcci", None)
+        lcci_module = getattr(self.model, "backbone_lcci", None) or getattr(self.model, "lcci", None)
         if lcci_module is None:
-            raise ValueError("Model has no 'lcci' attribute.")
+            raise ValueError("Model has no 'backbone_lcci' or 'lcci' attribute.")
 
         h_pre = lcci_module.register_forward_pre_hook(pre_hook)
         h_post = lcci_module.register_forward_hook(post_hook)

@@ -17,13 +17,13 @@ class MALITV2(nn.Module):
     """
     MALIT V2: Malaria Image Transformer V2
 
-    Pipeline:
+    HIS pipeline (three LCCI depths):
         Input (224×224 RGB)
-        → LearnableGaborLayer
+        → LearnableGaborLayer  → gabor_lcci  (depth 1)
         → EfficientNet-B0 (partial freeze)
-        → LCCIModule (channel-wise)
+        → backbone_lcci  (depth 2)
         → DualAttention (channel + spatial)
-        → MultiScaleAggregator (RF={1,3,5,7})
+        → MultiScaleAggregator — each branch has its own LCCI  (depth 3)
         → Global Average Pool
         → MLP Classifier
     """
@@ -76,10 +76,16 @@ class MALITV2(nn.Module):
         self.use_attention = use_attention
         self.use_multiscale = use_multiscale
 
-        # ── Custom head modules ──────────────────────────────────────────────
-        self.lcci = LCCIModule(feat_channels, reduction=lcci_reduction)
+        # ── HIS: three LCCI depths ───────────────────────────────────────────
+        # depth 1 — after Gabor (3-channel; use reduction=1 so mid=3)
+        self.gabor_lcci = LCCIModule(3, reduction=1)
+        # depth 2 — after backbone
+        self.backbone_lcci = LCCIModule(feat_channels, reduction=lcci_reduction)
+        # depth 3 — inside each aggregator branch (handled by AggregatorBranch.lcci)
         self.dual_attention = DualAttention(feat_channels, reduction=attention_reduction)
-        self.multiscale = MultiScaleAggregator(feat_channels, receptive_fields=ms_rfs)
+        self.aggregator = MultiScaleAggregator(
+            feat_channels, receptive_fields=ms_rfs, reduction=lcci_reduction
+        )
         self.gap = nn.AdaptiveAvgPool2d(1)
 
         self.classifier = nn.Sequential(
@@ -131,11 +137,13 @@ class MALITV2(nn.Module):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if self.use_gabor:
             x = self.gabor(x)                      # (B, 3, 224, 224)
+            if self.use_lcci:
+                x = self.gabor_lcci(x)             # depth 1 HIS
 
         feats = self.backbone(x)                   # (B, C, H, W)
 
         if self.use_lcci:
-            feats = self.lcci(feats)
+            feats = self.backbone_lcci(feats)      # depth 2 HIS
 
         if self.use_attention:
             feats, att_info = self.dual_attention(feats)
@@ -143,7 +151,7 @@ class MALITV2(nn.Module):
             att_info = {}
 
         if self.use_multiscale:
-            feats = self.multiscale(feats)
+            feats = self.aggregator(feats)         # depth 3 HIS inside each branch
 
         pooled = self.gap(feats).flatten(1)        # (B, C)
         logits = self.classifier(pooled)
@@ -156,15 +164,16 @@ class MALITV2(nn.Module):
         """512-d embedding after GAP — used for CBR and ensemble analysis."""
         if self.use_gabor:
             x = self.gabor(x)
+            if self.use_lcci:
+                x = self.gabor_lcci(x)
         feats = self.backbone(x)
         if self.use_lcci:
-            feats = self.lcci(feats)
+            feats = self.backbone_lcci(feats)
         if self.use_attention:
             feats, _ = self.dual_attention(feats)
         if self.use_multiscale:
-            feats = self.multiscale(feats)
+            feats = self.aggregator(feats)
         pooled = self.gap(feats).flatten(1)  # (B, C)
-        # Project to 512-d if needed
         if not hasattr(self, "_emb_proj"):
             C = pooled.shape[1]
             self._emb_proj = nn.Linear(C, 512, bias=False).to(pooled.device)

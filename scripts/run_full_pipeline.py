@@ -144,6 +144,20 @@ def main() -> None:
         for s in cfg.training.active_seeds
     ])
 
+    # ── Stage 2b: HIS Analysis ───────────────────────────────────────────────
+    logger.info("━━━ [2b/7] HIS Analysis ━━━")
+    try:
+        from src.interpretability.his_analysis import extract_his_stats
+        for seed, model in runner.seed_models.items():
+            his_stats = extract_his_stats(model)
+            saver.save_metrics(his_stats, f"his_stats_seed{seed}")
+            logger.info(
+                "Seed %s HIS: δ₁=%.3f | δ₂=%.3f | δ₃=%.3f",
+                seed, his_stats["delta_1"], his_stats["delta_2"], his_stats["delta_3_mean"],
+            )
+    except Exception as exc:
+        logger.warning("HIS analysis failed (non-fatal): %s", exc, exc_info=True)
+
     # ── Stage 3: Uncertainty ──────────────────────────────────────────────────
     logger.info("━━━ [3/7] Uncertainty Estimation ━━━")
     from src.explainability.bayesian_uncertainty import BayesianUncertainty
@@ -225,6 +239,25 @@ def main() -> None:
 
         # CBR consistency histogram
         plot_cbr_consistency(cbr_results, results_base / "cbr" / "consistency.png")
+
+        # Reliability diagrams + confidence histograms (per seed)
+        from src.visualization.reliability import plot_reliability_diagram
+        from src.visualization.confidence_histogram import plot_confidence_histogram
+
+        test_labels_arr = np.array(runner.seed_labels)
+        for seed_id, probs_arr in runner.seed_probs.items():
+            probs = np.array(probs_arr)
+            confidence = probs.max(axis=1)
+            correct = (probs.argmax(axis=1) == test_labels_arr).astype(float)
+            plot_reliability_diagram(
+                confidences=confidence,
+                correctness=correct,
+                save_path=plots_dir / f"reliability_seed{seed_id}.png",
+            )
+            plot_confidence_histogram(
+                confidences=confidence,
+                save_path=plots_dir / f"confidence_hist_seed{seed_id}.png",
+            )
 
     except Exception as exc:
         logger.warning("Visualization stage failed (non-fatal): %s", exc, exc_info=True)
