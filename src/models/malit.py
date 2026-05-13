@@ -45,6 +45,8 @@ class MALITV2(nn.Module):
         use_lcci: bool = True,
         use_attention: bool = True,
         use_multiscale: bool = True,
+        use_dais: bool = True,
+        dais_equal: bool = False,
     ):
         super().__init__()
         if ms_rfs is None:
@@ -75,18 +77,31 @@ class MALITV2(nn.Module):
         self.use_lcci = use_lcci
         self.use_attention = use_attention
         self.use_multiscale = use_multiscale
+        self.use_dais = use_dais
+        self.dais_equal = dais_equal
 
         # ── HIS: three LCCI depths ───────────────────────────────────────────
         # depth 1 — after Gabor (3-channel; use reduction=1 so mid=3)
-        self.gabor_lcci = LCCIModule(3, reduction=1)
+        self.gabor_lcci = LCCIModule(3, reduction=1, use_dais=use_dais)
         # depth 2 — after backbone
-        self.backbone_lcci = LCCIModule(feat_channels, reduction=lcci_reduction)
+        self.backbone_lcci = LCCIModule(feat_channels, reduction=lcci_reduction, use_dais=use_dais)
         # depth 3 — inside each aggregator branch (handled by AggregatorBranch.lcci)
         self.dual_attention = DualAttention(feat_channels, reduction=attention_reduction)
         self.aggregator = MultiScaleAggregator(
             feat_channels, receptive_fields=ms_rfs,
-            reduction=lcci_reduction, use_lcci=use_lcci,
+            reduction=lcci_reduction, use_lcci=use_lcci, use_dais=use_dais,
         )
+
+        # ── DAIS-Equal: single shared δ across all depths ────────────────────
+        # All 6 LCCI modules share one depth_scale_raw parameter so they must
+        # learn the same δ. Per-depth differential scaling is structurally
+        # impossible, isolating whether the *gradient* of δ matters vs
+        # uniform scaling alone. Only applied when LCCI is active.
+        if dais_equal and use_lcci:
+            shared_dsr = nn.Parameter(torch.tensor(0.0))
+            for lcci in [self.gabor_lcci, self.backbone_lcci,
+                         *[b.lcci for b in self.aggregator.branches]]:
+                lcci.depth_scale_raw = shared_dsr
         self.gap = nn.AdaptiveAvgPool2d(1)
 
         self.classifier = nn.Sequential(

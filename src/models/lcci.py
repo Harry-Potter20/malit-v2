@@ -16,12 +16,17 @@ class LCCIModule(nn.Module):
     effective_w_inh = softplus(depth_scale_raw) * w_inh
     """
 
-    def __init__(self, channels: int, reduction: int = 16):
+    def __init__(self, channels: int, reduction: int = 16, use_dais: bool = True):
         super().__init__()
         mid = max(channels // reduction, 1)
+        self.use_dais = use_dais
 
         self.w_inh = nn.Parameter(torch.ones(channels))
-        self.depth_scale_raw = nn.Parameter(torch.tensor(0.0))
+        # depth_scale_raw exists in both modes for consistent state_dict;
+        # requires_grad=False when DAIS is off so it never enters the optimiser.
+        self.depth_scale_raw = nn.Parameter(
+            torch.tensor(0.0), requires_grad=use_dais
+        )
 
         self.gate = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
@@ -34,8 +39,10 @@ class LCCIModule(nn.Module):
 
     @property
     def depth_scale(self) -> torch.Tensor:
-        """Positive-constrained inhibition scaling: delta_d = softplus(raw)."""
-        return F.softplus(self.depth_scale_raw)
+        """Learnable positive-constrained δ_d when DAIS is on; fixed 1.0 when off."""
+        if self.use_dais:
+            return F.softplus(self.depth_scale_raw)
+        return self.depth_scale_raw.new_ones(())
 
     def channel_energy(self, x: torch.Tensor) -> torch.Tensor:
         """E_c = (1/HW) Σ x²  — per-channel mean squared activation."""

@@ -39,6 +39,8 @@ ABLATION_VARIANTS: dict[str, dict[str, bool]] = {
     "no_lcci":       {"use_lcci": False},
     "no_attention":  {"use_attention": False},
     "no_multiscale": {"use_multiscale": False},
+    "no_dais":       {"use_dais": False},
+    "dais_equal":    {"dais_equal": True},
 }
 
 

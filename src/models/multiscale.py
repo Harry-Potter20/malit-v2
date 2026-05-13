@@ -19,6 +19,7 @@ class AggregatorBranch(nn.Module):
         dilation: int | None,
         reduction: int = 16,
         use_lcci: bool = True,
+        use_dais: bool = True,
     ):
         super().__init__()
         self.use_lcci = use_lcci
@@ -39,7 +40,7 @@ class AggregatorBranch(nn.Module):
                 nn.BatchNorm2d(channels),
                 nn.ReLU(inplace=True),
             )
-        self.lcci = LCCIModule(channels, reduction=reduction)
+        self.lcci = LCCIModule(channels, reduction=reduction, use_dais=use_dais)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.conv(x)
@@ -61,6 +62,7 @@ class MultiScaleAggregator(nn.Module):
         receptive_fields: list[int] | None = None,
         reduction: int = 16,
         use_lcci: bool = True,
+        use_dais: bool = True,
     ):
         super().__init__()
         if receptive_fields is None:
@@ -68,7 +70,7 @@ class MultiScaleAggregator(nn.Module):
         self.branches = nn.ModuleList(
             AggregatorBranch(
                 channels, self._RF_TO_DILATION[rf],
-                reduction=reduction, use_lcci=use_lcci,
+                reduction=reduction, use_lcci=use_lcci, use_dais=use_dais,
             )
             for rf in receptive_fields
         )
