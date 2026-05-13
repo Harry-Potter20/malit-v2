@@ -84,7 +84,8 @@ class MALITV2(nn.Module):
         # depth 3 — inside each aggregator branch (handled by AggregatorBranch.lcci)
         self.dual_attention = DualAttention(feat_channels, reduction=attention_reduction)
         self.aggregator = MultiScaleAggregator(
-            feat_channels, receptive_fields=ms_rfs, reduction=lcci_reduction
+            feat_channels, receptive_fields=ms_rfs,
+            reduction=lcci_reduction, use_lcci=use_lcci,
         )
         self.gap = nn.AdaptiveAvgPool2d(1)
 

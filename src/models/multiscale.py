@@ -9,11 +9,19 @@ from .lcci import LCCIModule
 class AggregatorBranch(nn.Module):
     """
     Single multi-scale branch: dilated depthwise-separable conv + HIS LCCI (depth 3).
-    The `.lcci` attribute exposes the branch's inhibition module for HIS analysis.
+    The `.lcci` attribute is always present for HIS analysis even when use_lcci=False;
+    it is simply not called in forward so it does not affect predictions.
     """
 
-    def __init__(self, channels: int, dilation: int | None, reduction: int = 16):
+    def __init__(
+        self,
+        channels: int,
+        dilation: int | None,
+        reduction: int = 16,
+        use_lcci: bool = True,
+    ):
         super().__init__()
+        self.use_lcci = use_lcci
         if dilation is None:
             self.conv = nn.Sequential(
                 nn.Conv2d(channels, channels, 1, bias=False),
@@ -34,7 +42,8 @@ class AggregatorBranch(nn.Module):
         self.lcci = LCCIModule(channels, reduction=reduction)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.lcci(self.conv(x))
+        out = self.conv(x)
+        return self.lcci(out) if self.use_lcci else out
 
 
 class MultiScaleAggregator(nn.Module):
@@ -51,12 +60,16 @@ class MultiScaleAggregator(nn.Module):
         channels: int,
         receptive_fields: list[int] | None = None,
         reduction: int = 16,
+        use_lcci: bool = True,
     ):
         super().__init__()
         if receptive_fields is None:
             receptive_fields = [1, 3, 5, 7]
         self.branches = nn.ModuleList(
-            AggregatorBranch(channels, self._RF_TO_DILATION[rf], reduction=reduction)
+            AggregatorBranch(
+                channels, self._RF_TO_DILATION[rf],
+                reduction=reduction, use_lcci=use_lcci,
+            )
             for rf in receptive_fields
         )
         self.fuse = nn.Sequential(
