@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import f1_score, roc_auc_score
+from PIL import Image as PILImage
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torchvision import datasets, transforms
@@ -45,6 +45,8 @@ logger = logging.getLogger("xray_pipeline")
 SEEDS = [42, 123, 456]
 EPOCHS = 30
 EARLY_STOP_PATIENCE = 3
+EARLY_STOP_MIN_EPOCHS = 8   # don't stop before epoch 8 — pretrained epoch-1 can be misleadingly high
+T_MAX = EARLY_STOP_MIN_EPOCHS + 2 * EARLY_STOP_PATIENCE  # 14 — LR fully decays within actual window
 IMAGE_SIZE = 224
 LR = 3e-4
 WEIGHT_DECAY = 1e-4
@@ -73,7 +75,7 @@ def _find_xray_dataset() -> Path:
     # Last-resort: search /kaggle/input for a directory named 'PNEUMONIA'
     kaggle_input = Path("/kaggle/input")
     if kaggle_input.exists():
-        hits = list(kaggle_input.rglob("PNEUMONIA"))
+        hits = [h for h in kaggle_input.rglob("PNEUMONIA") if h.is_dir()]
         if hits:
             root = hits[0].parent.parent  # chest_xray/
             logger.info("Located PNEUMONIA folder — using root: %s", root)
@@ -87,14 +89,16 @@ def _find_xray_dataset() -> Path:
 
 def _build_transforms(is_train: bool) -> transforms.Compose:
     mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    # Grayscale first — normalise any scanner colour tinting before augmentation,
+    # consistent with val/test. ColorJitter then operates purely on brightness/contrast.
     if is_train:
         return transforms.Compose([
             transforms.Resize((IMAGE_SIZE + 32, IMAGE_SIZE + 32)),
+            transforms.Grayscale(num_output_channels=3),
             transforms.RandomCrop(IMAGE_SIZE),
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(10),
             transforms.ColorJitter(brightness=0.2, contrast=0.2),
-            transforms.Grayscale(num_output_channels=3),  # X-rays are greyscale; keep 3-ch
             transforms.ToTensor(),
             transforms.Normalize(mean, std),
         ])
@@ -117,7 +121,6 @@ class _SubsetWithTransform(torch.utils.data.Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        from PIL import Image as PILImage
         path, label = self.samples[idx]
         img = PILImage.open(path).convert("RGB")
         return self.transform(img), label
@@ -136,8 +139,14 @@ def _build_loaders(dataset_root: Path, batch_size: int):
     raw_val      = datasets.ImageFolder(str(dataset_root / "val"))
     raw_test     = datasets.ImageFolder(str(dataset_root / "test"))
 
+    # Guard: all three splits must agree on class→index mapping before pooling.
+    # If they differed, NORMAL/PNEUMONIA labels would be silently swapped on pooled subset.
+    assert raw_trainval.class_to_idx == raw_val.class_to_idx == raw_test.class_to_idx, (
+        f"class_to_idx mismatch across splits: "
+        f"train={raw_trainval.class_to_idx} val={raw_val.class_to_idx} test={raw_test.class_to_idx}"
+    )
+
     pooled = raw_trainval.samples + raw_val.samples   # list of (path, label)
-    all_paths = [s[0] for s in pooled]
     all_labels = [s[1] for s in pooled]
 
     test_samples = list(raw_test.samples)
@@ -170,7 +179,10 @@ def _build_loaders(dataset_root: Path, batch_size: int):
         weights=sample_weights, num_samples=len(sample_weights), replacement=True
     )
 
-    kw = dict(num_workers=2, pin_memory=torch.cuda.is_available())
+    on_gpu = torch.cuda.is_available()
+    # persistent_workers intentionally omitted: workers are re-spawned per epoch so
+    # each seed's set_seed() call seeds their RNG correctly via torch.initial_seed().
+    kw = dict(num_workers=2, pin_memory=on_gpu)
     train_ds = _SubsetWithTransform(train_samples, _build_transforms(True))
     val_ds   = _SubsetWithTransform(val_samples,   _build_transforms(False))
     test_ds  = _SubsetWithTransform(test_samples,  _build_transforms(False))
@@ -180,6 +192,15 @@ def _build_loaders(dataset_root: Path, batch_size: int):
         DataLoader(val_ds,   batch_size=batch_size, shuffle=False,   **kw),
         DataLoader(test_ds,  batch_size=batch_size, shuffle=False,   **kw),
     )
+
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+
+
+def _nan_safe(v: float) -> float | None:
+    """Return None instead of NaN so json.dump produces valid JSON."""
+    import math
+    return None if (isinstance(v, float) and math.isnan(v)) else v
 
 
 # ── Model ────────────────────────────────────────────────────────────────────
@@ -216,10 +237,11 @@ def _train_seed(
         lr=LR,
         weight_decay=WEIGHT_DECAY,
         epochs=EPOCHS,
-        T_max=EPOCHS,
+        T_max=T_MAX,
         eta_min=1e-6,
         amp=True,
         early_stopping_patience=EARLY_STOP_PATIENCE,
+        early_stopping_min_epochs=EARLY_STOP_MIN_EPOCHS,
         grad_clip=1.0,
         device=device,
         saver=None,
@@ -227,24 +249,16 @@ def _train_seed(
         seed=seed,
         lambda_cal=0.1,
         cal_warmup_epochs=3,
+        f1_average="macro",   # macro F1 for both early stopping and reporting
     )
 
     logger.info("══ Seed %d ══", seed)
     trainer.fit()
 
-    # Evaluate on test set
+    # Evaluate on test set — test_metrics already contains f1 (macro), auroc, ece, brier
     test_metrics, preds, labels, _ = trainer.evaluate(test_loader)
-    probs = _collect_probs(model, test_loader, device)
-
-    # Macro F1 (fairer for imbalanced binary task reported in paper)
-    macro_f1  = float(f1_score(labels, preds, average="macro", zero_division=0))
-    binary_f1 = float(f1_score(labels, preds, average="binary", zero_division=0))
-
-    probs_arr = np.array(probs)
-    try:
-        auroc = float(roc_auc_score(labels, probs_arr[:, 1]))
-    except ValueError:
-        auroc = float("nan")
+    macro_f1 = test_metrics.get("f1", float("nan"))
+    auroc    = test_metrics.get("auroc", float("nan"))
 
     # HIS stats
     his_stats = extract_his_stats(model)
@@ -273,14 +287,13 @@ def _train_seed(
 
     # Save per-seed metrics
     seed_result = {
-        "seed":       seed,
-        "f1":         round(macro_f1, 6),
-        "f1_binary":  round(binary_f1, 6),
-        "auroc":      round(auroc, 6),
-        "accuracy":   round(test_metrics.get("accuracy", float("nan")), 6),
-        "ece":        round(test_metrics.get("ece", float("nan")), 6),
-        "brier":      round(test_metrics.get("brier", float("nan")), 6),
-        "his":        his_out,
+        "seed":     seed,
+        "f1":       _nan_safe(round(macro_f1, 6)),
+        "auroc":    _nan_safe(round(auroc, 6)),
+        "accuracy": _nan_safe(round(test_metrics.get("accuracy", float("nan")), 6)),
+        "ece":      _nan_safe(round(test_metrics.get("ece", float("nan")), 6)),
+        "brier":    _nan_safe(round(test_metrics.get("brier", float("nan")), 6)),
+        "his":      his_out,
     }
     with open(seed_dir / "metrics.json", "w") as f:
         json.dump(seed_result, f, indent=2)
@@ -290,22 +303,6 @@ def _train_seed(
         torch.cuda.empty_cache()
 
     return seed_result
-
-
-@torch.no_grad()
-def _collect_probs(
-    model: nn.Module, loader: DataLoader, device: torch.device
-) -> list[list[float]]:
-    model.eval()
-    all_probs = []
-    amp_ctx = torch.amp.autocast("cuda") if device.type == "cuda" else torch.no_grad()
-    for imgs, _ in loader:
-        imgs = imgs.to(device)
-        with amp_ctx:
-            logits, _ = model(imgs)
-        probs = torch.softmax(logits, dim=1).cpu().tolist()
-        all_probs.extend(probs)
-    return all_probs
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

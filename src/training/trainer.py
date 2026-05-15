@@ -64,6 +64,7 @@ class Trainer:
         eta_min: float = 1e-6,
         amp: bool = True,
         early_stopping_patience: int = 3,
+        early_stopping_min_epochs: int = 0,
         grad_clip: float = 1.0,
         device: str | torch.device | None = None,
         saver: ArtifactSaver | None = None,
@@ -72,6 +73,7 @@ class Trainer:
         grad_accum_steps: int = 1,
         lambda_cal: float = 0.1,
         cal_warmup_epochs: int = 3,
+        f1_average: str = "binary",
     ):
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -99,6 +101,8 @@ class Trainer:
         self.criterion = CalibrationAwareLoss(lambda_cal=lambda_cal)
         self.cal_warmup_epochs = cal_warmup_epochs
         self.early_stopping = EarlyStopping(patience=early_stopping_patience, mode="max")
+        self.early_stopping_min_epochs = early_stopping_min_epochs
+        self.f1_average = f1_average
         self.history: list[dict[str, Any]] = []
         self.calibration_history: list[dict[str, Any]] = []
         self._track_his = hasattr(model, "gabor_lcci") and hasattr(model, "backbone_lcci")
@@ -138,7 +142,7 @@ class Trainer:
                 self.optimizer.zero_grad(set_to_none=True)
 
         n = len(self.train_loader.dataset)
-        metrics = EvaluationMetrics.from_predictions(all_labels, all_preds)
+        metrics = EvaluationMetrics.from_predictions(all_labels, all_preds, average=self.f1_average)
         metrics["loss"] = total_loss / n
         metrics["ece_loss"] = ece_loss_total / n
         return metrics
@@ -160,7 +164,7 @@ class Trainer:
             all_labels.extend(labels.cpu().tolist())
             all_probs.extend(probs.cpu().tolist())
 
-        metrics = EvaluationMetrics.from_predictions(all_labels, all_preds, all_probs)
+        metrics = EvaluationMetrics.from_predictions(all_labels, all_preds, all_probs, average=self.f1_average)
         metrics["loss"] = total_loss / len(loader.dataset)
         metrics.update(self._compute_cal_metrics(all_probs, all_labels))
         return metrics, all_preds, all_labels
@@ -240,12 +244,17 @@ class Trainer:
                 epoch, self.epochs, train_m["loss"], val_f1, val_m.get("ece", 0.0),
             )
 
+            # Reset patience counter at the warmup boundary so epochs before
+            # early_stopping_min_epochs don't consume patience budget.
+            if epoch == self.early_stopping_min_epochs and epoch > 0:
+                self.early_stopping.counter = 0
+
             stop = self.early_stopping(val_f1, self.model)
             if val_f1 >= self.early_stopping.best and self.saver:
                 self.saver.save_model(self.model, self.model_name, self.seed, epoch)
                 best_metrics = val_m
 
-            if stop:
+            if stop and epoch >= self.early_stopping_min_epochs:
                 logger.info("Early stopping at epoch %d", epoch)
                 break
 
