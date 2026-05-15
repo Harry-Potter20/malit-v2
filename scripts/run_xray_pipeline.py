@@ -44,7 +44,7 @@ logger = logging.getLogger("xray_pipeline")
 
 SEEDS = [42, 123, 456]
 EPOCHS = 30
-EARLY_STOP_PATIENCE = 5
+EARLY_STOP_PATIENCE = 3
 IMAGE_SIZE = 224
 LR = 3e-4
 WEIGHT_DECAY = 1e-4
