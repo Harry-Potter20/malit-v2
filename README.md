@@ -8,7 +8,7 @@
 
 > **MALIT** — Multi-scale Attention with Learnable channel Inhibition and Texture-aware filters
 
-Official implementation of *"MALIT: An Intelligent Malaria Screening System with Learnable Channel Competitive Inhibition, Interpretable Gabor Texture Filters, and Confidence-Gated Escalation"* — under review at *Expert Systems with Applications*.
+Official implementation of *"MALIT: An Intelligent Malaria Screening System with Learnable Channel Competitive Inhibition, Interpretable Gabor Texture Filters, and Confidence-Gated Escalation"
 
 ---
 
